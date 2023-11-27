@@ -804,7 +804,7 @@ class Albumentations:
                 A.RandomGamma(p=0.0),
                 A.ImageCompression(quality_lower=75, p=0.0),
                 A.CropAndPad(percent=-0.2, p=1.0)]  # transforms
-            self.transform = A.Compose(T, bbox_params=A.BboxParams(format='yolo', label_fields=['class_labels']))
+            self.transform = A.Compose(T, bbox_params=A.BboxParams(format='yolo', label_fields=['class_labels'], check_each_transform=True))
 
             LOGGER.info(prefix + ', '.join(f'{x}'.replace('always_apply=False, ', '') for x in T if x.p))
         except ImportError:  # package not installed, skip
@@ -833,8 +833,14 @@ class Albumentations:
                     labels['cls'] = np.array(new['class_labels'])
                     bboxes_new = np.array(new['bboxes'], dtype=np.float32)
                     masks_new = np.array(new['masks'])
+                    # TODO: Handle inconsistent number of bboxes and masks
+                    # See https://github.com/albumentations-team/albumentations/issues/836
+                    # and https://github.com/albumentations-team/albumentations/issues/745
                     segments_new = masks2segments(masks_new, strategy='largest')
-            instances_new = Instances(bboxes_new, segments=segments_new)
+                    non_empty = [s.shape[0] != 0 for s in segments_new]
+                    if len(segments_new[non_empty]) != len(bboxes_new):
+                        pass
+            instances_new = Instances(bboxes_new, segments=segments_new[non_empty])
             labels['instances'].update(bboxes=instances_new.bboxes, segments=instances_new.segments)
 
         return labels
