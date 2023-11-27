@@ -13,7 +13,7 @@ from ultralytics.utils import LOGGER, colorstr
 from ultralytics.utils.checks import check_version
 from ultralytics.utils.instance import Instances
 from ultralytics.utils.metrics import bbox_ioa
-from ultralytics.utils.ops import segment2box
+from ultralytics.utils.ops import segment2box, masks2segments
 
 from .utils import polygons2masks, polygons2masks_overlap
 
@@ -802,7 +802,8 @@ class Albumentations:
                 A.CLAHE(p=0.01),
                 A.RandomBrightnessContrast(p=0.0),
                 A.RandomGamma(p=0.0),
-                A.ImageCompression(quality_lower=75, p=0.0)]  # transforms
+                A.ImageCompression(quality_lower=75, p=0.0),
+                A.CropAndPad(percent=-0.2, p=1.0)]  # transforms
             self.transform = A.Compose(T, bbox_params=A.BboxParams(format='yolo', label_fields=['class_labels']))
 
             LOGGER.info(prefix + ', '.join(f'{x}'.replace('always_apply=False, ', '') for x in T if x.p))
@@ -816,17 +817,26 @@ class Albumentations:
         im = labels['img']
         cls = labels['cls']
         if len(cls):
+            h, w = im.shape[:2]
             labels['instances'].convert_bbox('xywh')
-            labels['instances'].normalize(*im.shape[:2][::-1])
+            labels['instances'].normalize(w, h)
             bboxes = labels['instances'].bboxes
+            segments = labels['instances'].segments
+            segments[..., 0] *= w
+            segments[..., 1] *= h
+            masks = polygons2masks((h, w), segments, color=1, downsample_ratio=1)
             # TODO: add supports of segments and keypoints
             if self.transform and random.random() < self.p:
-                new = self.transform(image=im, bboxes=bboxes, class_labels=cls)  # transformed
+                new = self.transform(image=im, masks=masks, bboxes=bboxes, class_labels=cls)  # transformed
                 if len(new['class_labels']) > 0:  # skip update if no bbox in new im
                     labels['img'] = new['image']
                     labels['cls'] = np.array(new['class_labels'])
-                    bboxes = np.array(new['bboxes'], dtype=np.float32)
-            labels['instances'].update(bboxes=bboxes)
+                    bboxes_new = np.array(new['bboxes'], dtype=np.float32)
+                    masks_new = np.array(new['masks'])
+                    segments_new = masks2segments(masks_new, strategy='largest')
+            instances_new = Instances(bboxes_new, segments=segments_new)
+            labels['instances'].update(bboxes=instances_new.bboxes, segments=instances_new.segments)
+
         return labels
 
 
